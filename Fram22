@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>VIP Lotto ProPlus</title>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome & HTML2Canvas -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+  <style>
+    :root {
+      --bg-body: #000000; --bg-app: #0a0a0a; --bg-panel: #111111; --bg-input: #1a1a1a;
+      --bg-disabled: #1f2937; --text-primary: #ffffff; --text-secondary: #9ca3af;
+      --text-muted: #6b7280; --text-accent: #facc15; --text-accent-bold: #eab308;
+      --text-danger: #ef4444; --text-success: #22c55e; --text-info: #3b82f6;
+      --border-color: rgba(255, 255, 255, 0.1); --header-grad-1: #450a0a; --header-grad-2: #000000;
+    }
+    .theme-light {
+      --bg-body: #e5e7eb; --bg-app: #f9fafb; --bg-panel: #ffffff; --bg-input: #f3f4f6;
+      --bg-disabled: #e5e7eb; --text-primary: #111827; --text-secondary: #4b5563;
+      --text-muted: #9ca3af; --text-accent: #ca8a04; --text-accent-bold: #a16207;
+      --text-danger: #dc2626; --text-success: #16a34a; --text-info: #2563eb;
+      --border-color: rgba(0, 0, 0, 0.1); --header-grad-1: #fee2e2; --header-grad-2: #ffffff;
+    }
+    body { background-color: var(--bg-body); margin: 0; font-family: sans-serif; }
+    .animate-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const DEFAULT_PAY_RATES = {
+      '3_top': { name: '3 ตัวบน', pay: 900 }, '3_tod': { name: '3 ตัวโต๊ด', pay: 150 },
+      '3_bot': { name: '3 ตัวล่าง', pay: 200 }, '2_top': { name: '2 ตัวบน', pay: 100 },
+      '2_bot': { name: '2 ตัวล่าง', pay: 100 }, '1_top': { name: 'วิ่งบน', pay: 3.2 },
+      '1_bot': { name: 'วิ่งล่าง', pay: 4.2 },
+    };
+    const DEFAULT_COMM_RATES = { '3_top': 0, '3_tod': 0, '3_bot': 0, '2_top': 0, '2_bot': 0, '1_top': 0, '1_bot': 0 };
+
+    // --- Helper Functions ---
+    const getTodayYYYYMMDD = () => {
+      const d = new Date();
+      const local = new Date(d.getTime() - (d.getTimezoneOffset() * 60000));
+      return local.toISOString().split('T')[0];
+    };
+
+    const isCampOpen = (camp) => {
+      if (!camp || camp.status === 'paused') return false;
+      if (!camp.openTime || !camp.closeTime || !camp.closeTime.includes(':')) return false;
+      const now = new Date();
+      const current = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+      if (camp.openTime <= camp.closeTime) return current >= camp.openTime && current < camp.closeTime;
+      else return current >= camp.openTime || current < camp.closeTime;
+    };
+
+    const canCancelTicket = (camp) => {
+      if (!camp || !isCampOpen(camp)) return false;
+      if (!camp.closeTime || !camp.closeTime.includes(':')) return false;
+      const [ch, cm] = camp.closeTime.split(':').map(Number);
+      const now = new Date();
+      const curH = now.getHours();
+      const curM = now.getMinutes();
+      let diffMins = (ch * 60 + cm) - (curH * 60 + curM);
+      if (diffMins < 0) diffMins += 24 * 60; 
+      return diffMins >= 5; 
+    };
+
+    // --- Persistent Storage Hook ---
+    function usePersistentStorage(key, initialValue) {
+      const [storedValue, setStoredValue] = useState(() => {
+        try {
+          const item = window.localStorage.getItem(key);
+          if (item) {
+             const parsed = JSON.parse(item);
+             if (Array.isArray(initialValue) && !Array.isArray(parsed)) return initialValue;
+             return parsed;
+          }
+          return initialValue;
+        } catch (error) { return initialValue; }
+      });
+      useEffect(() => { try { window.localStorage.setItem(key, JSON.stringify(storedValue)); } catch (error) {} }, [key, storedValue]);
+      return [storedValue, setStoredValue];
+    }
+
+    // ================= COMPONENTS =================
+
+    const ThemeToggle = ({ ctx }) => (
+      <button onClick={() => ctx.setIsDarkMode(!ctx.isDarkMode)} className="p-2.5 bg-[var(--bg-panel)] rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-color)] shadow-sm transition-all">
+        {ctx.isDarkMode ? <i className="fas fa-sun text-[var(--text-accent)] text-lg"></i> : <i className="fas fa-moon text-gray-600 text-lg"></i>}
+      </button>
+    );
+
+    const LoginView = ({ ctx }) => {
+      const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+      const handleLogin = (e) => {
+        e.preventDefault();
+        const { username, password } = loginForm;
+        if (!username || !password) return ctx.showNotification('กรุณากรอกข้อมูลให้ครบถ้วน');
+        if (username === 'Admin007' && password === 'Admin007') {
+          ctx.setUser({ uid: 'ADMIN007', name: 'ผู้ดูแลระบบสูงสุด', role: 'admin', credit: 9999999 });
+          ctx.setView('admin'); ctx.showNotification('เข้าสู่ระบบแอดมินสำเร็จ'); return;
+        }
+        const foundUser = (ctx.usersDb || []).find(u => u?.username === username && u?.password === password);
+        if (foundUser) {
+          if (foundUser.role === 'admin') { ctx.setUser(foundUser); ctx.setView('admin'); } 
+          else { ctx.setUser(foundUser); ctx.setView('home'); ctx.showNotification(`ยินดีต้อนรับ ${foundUser.name}`); }
+        } else {
+          ctx.showNotification('Username หรือ Password ไม่ถูกต้อง หรือยังไม่ได้สมัครสมาชิก!');
+        }
+      };
+
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-gradient-to-b from-[var(--header-grad-1)] to-[var(--header-grad-2)] relative z-10">
+          <div className="absolute top-4 right-4 z-20"><ThemeToggle ctx={ctx} /></div>
+          <div className="w-full max-w-sm bg-[var(--bg-panel)] p-8 rounded-3xl border border-[var(--border-color)] shadow-2xl relative overflow-hidden">
+            <div className="absolute -top-20 -right-20 w-40 h-40 bg-red-500/10 rounded-full blur-3xl"></div>
+            <div className="text-center mb-8 relative z-10">
+              <div className="w-24 h-24 mx-auto bg-gradient-to-tr from-yellow-400 to-yellow-600 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-yellow-500/20 border-4 border-[var(--bg-app)]">
+                <i className="fas fa-crown text-black text-5xl"></i>
+              </div>
+              <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-600 uppercase tracking-widest drop-shadow-sm">VIP LOTTO</h1>
+              <p className="text-[var(--text-secondary)] text-sm mt-1 font-bold">Ver. 1 ProPlus</p>
+            </div>
+            <form onSubmit={handleLogin} className="space-y-5 relative z-10">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-[var(--text-muted)]"><i className="fas fa-user"></i></div>
+                <input type="text" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl py-3.5 pl-10 pr-4 text-[var(--text-primary)] focus:border-[var(--text-accent)] outline-none transition-colors" placeholder="ชื่อผู้ใช้งาน (Username)" />
+              </div>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center text-[var(--text-muted)]"><i className="fas fa-lock"></i></div>
+                <input type="password" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl py-3.5 pl-10 pr-4 text-[var(--text-primary)] focus:border-[var(--text-accent)] outline-none transition-colors" placeholder="รหัสผ่าน (Password)" />
+              </div>
+              <button type="submit" className="w-full py-4 bg-gradient-to-r from-red-600 to-red-800 text-white rounded-xl font-bold text-lg shadow-lg mt-2 transition-transform active:scale-95">เข้าสู่ระบบ</button>
+            </form>
+          </div>
+        </div>
+      );
+    };
+
+    const HomeView = ({ ctx }) => {
+      const currentUser = (ctx.usersDb || []).find(u => u?.uid === ctx.user?.uid) || ctx.user;
+      const now = new Date();
+      const userCommRates = currentUser?.commRates || {};
+      const hasCommission = Object.values(userCommRates).some(rate => (parseFloat(rate) || 0) > 0);
+      
+      return (
+        <div className="pb-24 animate-in">
+          <div className="bg-gradient-to-b from-[var(--header-grad-1)] to-[var(--header-grad-2)] p-6 rounded-b-[2.5rem] shadow-xl border-b border-[var(--border-color)]">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <p className="text-[var(--text-accent-bold)] text-xs font-bold flex items-center gap-1 mb-1"><i className="fas fa-crown"></i> VIP MEMBER</p>
+                <h2 className="text-[var(--text-primary)] text-2xl font-bold leading-none">{currentUser?.name}</h2>
+                {hasCommission && <p className="text-green-500 text-xs mt-1 font-medium bg-green-500/10 px-2 py-0.5 rounded-full inline-block">รับส่วนลดพิเศษ (มีค่าคอม)</p>}
+              </div>
+              <div className="flex gap-2 items-center">
+                 <ThemeToggle ctx={ctx} />
+                 <button onClick={() => { ctx.setUser(null); ctx.setView('login'); }} className="p-2.5 bg-[var(--bg-panel)] rounded-full text-[var(--text-secondary)] hover:text-[var(--text-danger)] border border-[var(--border-color)] shadow-sm"><i className="fas fa-sign-out-alt"></i></button>
+              </div>
+            </div>
+            <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-yellow-600 p-6 rounded-3xl shadow-2xl shadow-yellow-600/20">
+              <p className="text-yellow-900 font-bold text-sm mb-1">เครดิตคงเหลือ</p>
+              <h3 className="text-black text-4xl font-black tracking-tight">฿ {(currentUser?.credit || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</h3>
+            </div>
+            
+            <div className="grid grid-cols-4 gap-2 mt-5">
+              <button onClick={() => ctx.setView('user_tickets')} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col items-center justify-center gap-2 hover:border-[var(--text-accent)] shadow-sm transition-colors">
+                 <i className="fas fa-file-invoice text-[var(--text-accent-bold)] text-xl"></i><span className="text-[10px] font-bold text-[var(--text-secondary)]">โพยของฉัน</span>
+              </button>
+              <button onClick={() => ctx.setView('sales')} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col items-center justify-center gap-2 hover:border-[var(--text-accent)] shadow-sm transition-colors">
+                 <i className="fas fa-chart-pie text-purple-500 text-xl"></i><span className="text-[10px] font-bold text-[var(--text-secondary)]">ยอดขาย</span>
+              </button>
+              <button onClick={() => ctx.setView('results')} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col items-center justify-center gap-2 hover:border-[var(--text-accent)] shadow-sm transition-colors">
+                 <i className="fas fa-medal text-[var(--text-success)] text-xl"></i><span className="text-[10px] font-bold text-[var(--text-secondary)]">ผลรางวัล</span>
+              </button>
+              <button onClick={() => ctx.setView('contact')} className="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col items-center justify-center gap-2 hover:border-[var(--text-accent)] shadow-sm transition-colors">
+                 <i className="fas fa-comment-dots text-[var(--text-info)] text-xl"></i><span className="text-[10px] font-bold text-[var(--text-secondary)]">ติดต่อแอดมิน</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="px-5 mt-6">
+            <h3 className="text-[var(--text-primary)] font-bold text-lg mb-4 flex items-center gap-2"><div className="w-1.5 h-6 bg-gradient-to-b from-red-500 to-red-800 rounded-full"></div> กดที่นี่เพื่อแทงหวย</h3>
+            <div className="space-y-3">
+              {(ctx.campaigns || []).map(camp => {
+                if (!camp || camp.status === 'completed') return null;
+                const isOpen = isCampOpen(camp);
+
+                return (
+                  <button key={camp.id} onClick={() => { if (!isOpen) return ctx.showNotification('หวยรอบนี้ปิดรับแทงแล้วครับ'); ctx.setActiveCampaign(camp); ctx.setCart([]); ctx.setView('lotto'); }} className={`w-full bg-[var(--bg-panel)] border border-[var(--border-color)] p-4 rounded-2xl flex items-center justify-between transition-all text-left shadow-sm ${isOpen ? 'hover:border-[var(--text-accent)]' : 'opacity-60 grayscale'}`}>
+                    <div>
+                      <h4 className="text-[var(--text-primary)] font-bold text-lg">{camp.name}</h4>
+                      <p className={`text-xs mt-1 flex items-center gap-1 ${isOpen ? 'text-[var(--text-danger)]' : 'text-[var(--text-secondary)]'}`}>
+                        <i className="fas fa-clock"></i> {isOpen ? `เปิด: ${camp.openTime} - ${camp.closeTime}` : 'ปิดรับแทง / อยู่นอกเวลา'}
+                      </p>
+                    </div>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm ${isOpen ? 'bg-gradient-to-tr from-yellow-400 to-yellow-600' : 'bg-gray-600'}`}>
+                      {isOpen ? <i className="fas fa-chevron-right"></i> : <i className="fas fa-ban"></i>}
+                    </div>
+                  </button>
+                )
+              })}
+              {(ctx.campaigns || []).filter(c => c?.status !== 'completed').length === 0 && (
+                <div className="text-center text-[var(--text-muted)] py-10 bg-[var(--bg-panel)] rounded-2xl border border-[var(--border-color)] shadow-sm flex flex-col items-center">
+                  <i className="fas fa-ban text-4xl opacity-20 mb-2"></i>
+                  <p>ไม่มีหวยเปิดรับแทงในขณะนี้</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const LottoView = ({ ctx }) => {
+      const currentCamp = (ctx.campaigns || []).find(c => c?.id === ctx.activeCampaign?.id) || ctx.activeCampaign || {};
+
+      const [digitType, setDigitType] = useState('2'); 
+      const [inputMode, setInputMode] = useState('keypad'); 
+      const [posTop, setPosTop] = useState(true);
+      const [posBot, setPosBot] = useState(true);
+      const [posTod, setPosTod] = useState(false);
+      const [isReverse, setIsReverse] = useState(false);
+      const [keypadVal, setKeypadVal] = useState('');
+      const [textVal, setTextVal] = useState('');
+      const [winInput, setWinInput] = useState(''); 
+
+      const handleDigitTypeChange = (type) => {
+        setDigitType(type); setKeypadVal(''); setWinInput('');
+        if (type === '3') { setPosBot(false); setPosTop(true); setPosTod(false); }
+        if (type === '2') { setPosBot(true); setPosTop(true); setPosTod(false); }
+        if (type === '1') { setPosBot(true); setPosTop(true); setPosTod(false); setIsReverse(false); }
+      };
+
+      const getReversePermutations = (str) => {
+        if (str.length <= 1) return [str];
+        if (str.length === 2) return Array.from(new Set([str, str[1]+str[0]]));
+        let result = [];
+        const permute = (arr, m = []) => {
+          if (arr.length === 0) result.push(m.join(''));
+          else {
+            for (let i = 0; i < arr.length; i++) {
+              let curr = arr.slice();
+              let next = curr.splice(i, 1);
+              permute(curr.slice(), m.concat(next));
+            }
+          }
+        }
+        permute(str.split(''));
+        return Array.from(new Set(result)); 
+      };
+
+      const getPermutationsOfK = (arr, k) => {
+        let results = [];
+        if (k === 1) return arr.map(a => [a]);
+        for (let i = 0; i < arr.length; i++) {
+          let firstChar = arr[i];
+          let charsLeft = arr.slice(0, i).concat(arr.slice(i + 1));
+          let innerPermutations = getPermutationsOfK(charsLeft, k - 1);
+          for (let j = 0; j < innerPermutations.length; j++) { results.push([firstChar].concat(innerPermutations[j])); }
+        }
+        return results;
+      };
+
+      const handleAddToCart = (rawInput, skipReverse = false) => {
+        if (!isCampOpen(currentCamp)) return ctx.showNotification('❌ อยู่นอกเวลาทำการ หรือแอดมินปิดรับชั่วคราว');
+        if (!posTop && !posBot && !posTod) return ctx.showNotification('กรุณาเลือกตำแหน่ง (บน, ล่าง, โต๊ด)');
+        
+        const rawNumbers = rawInput.split(/[\n\s,]+/).map(n => n.trim()).filter(n => n);
+        const reqLength = parseInt(digitType);
+        let addedCount = 0; let blockedCount = 0; let newCartItems = []; let sessionTods = new Set(); 
+
+        rawNumbers.forEach(numStr => {
+          if (/^\d+$/.test(numStr) && numStr.length === reqLength) {
+            const numbersToBet = (isReverse && !skipReverse) ? getReversePermutations(numStr) : [numStr];
+            numbersToBet.forEach(num => {
+              const blocked = currentCamp.blockedNumbers || [];
+              if (blocked.includes(num)) { blockedCount++; return; }
+              const rates = currentCamp.payRates || DEFAULT_PAY_RATES;
+              if (posTop) { newCartItems.push({ id: Math.random(), number: num, typeId: `${reqLength}_top`, typeName: rates[`${reqLength}_top`].name, price: '', pay: rates[`${reqLength}_top`].pay }); addedCount++; }
+              if (posBot && digitType !== '3') { newCartItems.push({ id: Math.random(), number: num, typeId: `${reqLength}_bot`, typeName: rates[`${reqLength}_bot`].name, price: '', pay: rates[`${reqLength}_bot`].pay }); addedCount++; }
+              if (digitType === '3') {
+                if (posBot) { newCartItems.push({ id: Math.random(), number: num, typeId: `3_bot`, typeName: rates[`3_bot`].name, price: '', pay: rates[`3_bot`].pay }); addedCount++; }
+                if (posTod) { 
+                  const sortedNum = num.split('').sort().join('');
+                  if (!sessionTods.has(sortedNum)) { sessionTods.add(sortedNum); newCartItems.push({ id: Math.random(), number: num, typeId: `3_tod`, typeName: rates[`3_tod`].name, price: '', pay: rates[`3_tod`].pay }); addedCount++; }
+                }
+              }
+            });
+          }
+        });
+
+        if (blockedCount > 0) ctx.showNotification(`⚠️ มีเลขปิดรับ (เลขอั้น) ${blockedCount} รายการ ถูกตัดออก`);
+        if (addedCount > 0) { ctx.setCart(prev => [...prev, ...newCartItems]); ctx.showNotification(`เพิ่ม ${addedCount} รายการลงโพย`); setKeypadVal(''); }
+      };
+
+      const apply19Doors = (numChar) => {
+        let res = new Set();
+        for(let i=0; i<=9; i++) { res.add(`${numChar}${i}`); res.add(`${i}${numChar}`); }
+        handleAddToCart(Array.from(res).join(' '), true); 
+      };
+      const applyWin = (str) => {
+        const k = parseInt(digitType);
+        const uniqueChars = Array.from(new Set(str.split('')));
+        if (uniqueChars.length < k) return ctx.showNotification(`กรุณาพิมพ์อย่างน้อย ${k} ตัวเลขที่ไม่ซ้ำกัน`);
+        const perms = getPermutationsOfK(uniqueChars, k);
+        const res = perms.map(p => p.join(''));
+        handleAddToCart(res.join(' '), true); setWinInput('');
+      };
+
+      return (
+        <div className="flex flex-col h-screen bg-[var(--bg-app)]">
+          <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-20 shadow-sm">
+            <button onClick={() => ctx.setView('home')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+            <div className="flex-1">
+              <h2 className="text-[var(--text-primary)] font-bold text-base leading-tight truncate">{currentCamp?.name}</h2>
+              <p className="text-[var(--text-muted)] text-[10px] mt-0.5">เปิด: {currentCamp?.openTime} - {currentCamp?.closeTime}</p>
+            </div>
+            <button onClick={() => ctx.setView('cart')} className="relative p-2.5 bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-xl text-white shadow-sm">
+              <i className="fas fa-file-invoice text-lg"></i>
+              {(ctx.cart || []).length > 0 && <span className="absolute -top-2 -right-2 bg-red-600 border-2 border-[var(--bg-panel)] text-white text-[10px] w-6 h-6 flex items-center justify-center rounded-full font-bold">{(ctx.cart || []).length}</span>}
+            </button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto pb-6">
+            <div className="p-4 space-y-4">
+              <div className="flex bg-[var(--bg-input)] rounded-xl p-1 border border-[var(--border-color)]">
+                {['3', '2', '1'].map(type => (
+                  <button key={type} className={`flex-1 py-2.5 text-sm font-bold rounded-lg ${digitType === type ? 'bg-red-600 text-white shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`} onClick={() => handleDigitTypeChange(type)}>เลข {type} ตัว</button>
+                ))}
+              </div>
+
+              <div>
+                <label className="text-[var(--text-secondary)] text-xs font-bold block mb-2">เลือกตำแหน่ง</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setPosTop(!posTop)} className={`flex-1 py-3 rounded-xl font-bold border transition-colors ${posTop ? 'bg-yellow-500/10 border-yellow-500 text-[var(--text-accent-bold)]' : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)]'}`}>บน</button>
+                  {digitType === '3' && <button onClick={() => setPosTod(!posTod)} className={`flex-1 py-3 rounded-xl font-bold border transition-colors ${posTod ? 'bg-yellow-500/10 border-yellow-500 text-[var(--text-accent-bold)]' : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)]'}`}>โต๊ด</button>}
+                  <button onClick={() => setPosBot(!posBot)} className={`flex-1 py-3 rounded-xl font-bold border transition-colors ${posBot ? 'bg-yellow-500/10 border-yellow-500 text-[var(--text-accent-bold)]' : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)]'}`}>ล่าง</button>
+                </div>
+              </div>
+
+              {digitType !== '1' && inputMode !== 'special' && (
+                <button onClick={() => setIsReverse(!isReverse)} className={`w-full p-3 rounded-xl font-bold border flex items-center justify-between transition-colors ${isReverse ? 'bg-green-500/10 border-green-500 text-[var(--text-success)]' : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-secondary)]'}`}>
+                  <span>กลับเลขอัตโนมัติ (สลับทุกประตู)</span>
+                  <div className={`w-10 h-5 rounded-full p-1 transition-colors ${isReverse ? 'bg-green-500' : 'bg-[var(--text-muted)]'}`}><div className={`w-3 h-3 bg-white rounded-full transition-transform ${isReverse ? 'translate-x-5' : 'translate-x-0'}`}></div></div>
+                </button>
+              )}
+
+              <div className="flex border-b border-[var(--border-color)] pb-2 pt-2 gap-4">
+                <button onClick={() => setInputMode('keypad')} className={`pb-2 text-sm font-bold border-b-2 transition-colors ${inputMode === 'keypad' ? 'border-red-500 text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)]'}`}>กดคีย์แพด</button>
+                <button onClick={() => setInputMode('text')} className={`pb-2 text-sm font-bold border-b-2 transition-colors ${inputMode === 'text' ? 'border-red-500 text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)]'}`}>พิมพ์หลายเลข</button>
+                <button onClick={() => setInputMode('special')} className={`pb-2 text-sm font-bold border-b-2 transition-colors ${inputMode === 'special' ? 'border-red-500 text-[var(--text-primary)] flex items-center gap-1' : 'border-transparent text-[var(--text-secondary)] flex items-center gap-1'}`}><i className="fas fa-bolt"></i> คีย์ด่วน</button>
+              </div>
+
+              {inputMode === 'keypad' && (
+                <div className="bg-[var(--bg-panel)] p-4 rounded-2xl border border-[var(--border-color)] animate-in">
+                  <div className="h-16 bg-[var(--bg-body)] rounded-xl border border-[var(--border-color)] mb-4 flex items-center justify-center shadow-inner">
+                    <span className={`text-4xl font-mono tracking-widest ${keypadVal.length === parseInt(digitType) ? 'text-[var(--text-accent-bold)] font-bold' : 'text-[var(--text-muted)]'}`}>{keypadVal || '-'.repeat(parseInt(digitType))}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[1,2,3,4,5,6,7,8,9].map(num => <button key={num} onClick={() => {if (keypadVal.length < parseInt(digitType)) setKeypadVal(prev => prev + num)}} className="bg-[var(--bg-input)] text-[var(--text-primary)] text-2xl font-bold py-4 rounded-xl border border-[var(--border-color)] active:opacity-70">{num}</button>)}
+                    <button onClick={() => setKeypadVal('')} className="bg-red-500/10 text-[var(--text-danger)] text-lg font-bold py-4 rounded-xl border border-red-500/30">C</button>
+                    <button onClick={() => {if (keypadVal.length < parseInt(digitType)) setKeypadVal(prev => prev + '0')}} className="bg-[var(--bg-input)] text-[var(--text-primary)] text-2xl font-bold py-4 rounded-xl border border-[var(--border-color)] active:opacity-70">0</button>
+                    <button onClick={() => setKeypadVal(prev => prev.slice(0, -1))} className="bg-[var(--bg-input)] text-[var(--text-secondary)] flex items-center justify-center py-4 rounded-xl border border-[var(--border-color)] active:opacity-70"><i className="fas fa-backspace"></i></button>
+                  </div>
+                  <button onClick={() => handleAddToCart(keypadVal)} disabled={keypadVal.length !== parseInt(digitType)} className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 ${keypadVal.length === parseInt(digitType) ? 'bg-gradient-to-r from-red-600 to-red-800 text-white shadow-md' : 'bg-[var(--bg-disabled)] text-[var(--text-muted)]'}`}><i className="fas fa-plus-circle"></i> นำเลขเข้าโพย</button>
+                </div>
+              )}
+
+              {inputMode === 'text' && (
+                <div className="animate-in">
+                  <textarea value={textVal} onChange={(e) => setTextVal(e.target.value)} placeholder="พิมพ์ตัวเลขที่นี่ เว้นวรรคหรือขึ้นบรรทัดใหม่" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl p-4 text-[var(--text-primary)] text-lg font-mono outline-none h-40 resize-none shadow-inner" />
+                  <button onClick={() => { handleAddToCart(textVal); setTextVal(''); }} disabled={!textVal.trim()} className={`w-full mt-4 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-colors ${textVal.trim() ? 'bg-gradient-to-r from-red-600 to-red-800 text-white shadow-md' : 'bg-[var(--bg-disabled)] text-[var(--text-muted)]'}`}><i className="fas fa-plus-circle"></i> นำทั้งหมดเข้าโพย</button>
+                </div>
+              )}
+
+              {inputMode === 'special' && (
+                <div className="animate-in space-y-4">
+                  {digitType === '2' && (
+                    <div className="bg-[var(--bg-panel)] p-4 rounded-xl border border-[var(--border-color)] shadow-sm">
+                      <h3 className="font-bold text-[var(--text-primary)] mb-1 flex items-center gap-1.5"><i className="fas fa-bolt text-[var(--text-accent)]"></i> รูด 19 ประตู</h3>
+                      <div className="grid grid-cols-5 gap-2 mt-3">
+                        {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                          <button key={n} onClick={() => apply19Doors(n)} className="bg-[var(--bg-input)] text-[var(--text-primary)] text-xl font-bold py-3 rounded-lg border border-[var(--border-color)] active:bg-yellow-500/20 hover:border-yellow-500 transition-colors shadow-sm">{n}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(digitType === '2' || digitType === '3') && (
+                    <div className="bg-[var(--bg-panel)] p-4 rounded-xl border border-[var(--border-color)] shadow-sm">
+                      <h3 className="font-bold text-[var(--text-primary)] mb-1 flex items-center gap-1.5"><i className="fas fa-bolt text-[var(--text-info)]"></i> เลขวิน {digitType} ตัว</h3>
+                      <div className="flex gap-2 mt-3">
+                        <input type="text" value={winInput} onChange={e => setWinInput(e.target.value.replace(/\D/g, ''))} placeholder="พิมพ์เลขชุดวินที่นี่..." className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-[var(--text-primary)] text-lg font-mono outline-none focus:border-blue-500 shadow-inner" />
+                        <button onClick={() => applyWin(winInput)} disabled={winInput.length < parseInt(digitType)} className="bg-gradient-to-r from-blue-600 to-blue-800 text-white font-bold px-4 rounded-lg shadow-md disabled:opacity-50 transition-colors">เพิ่มวิน</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const CartView = ({ ctx }) => {
+      const [globalPrice, setGlobalPrice] = useState('');
+      const [customerName, setCustomerName] = useState(''); // เก็บชื่อลูกค้าเล่น
+      
+      const currentUser = (ctx.usersDb || []).find(u => u?.uid === ctx.user?.uid) || ctx.user;
+      const currentCamp = (ctx.campaigns || []).find(c => c?.id === ctx.activeCampaign?.id) || ctx.activeCampaign || {};
+
+      const total = (ctx.cart || []).reduce((sum, item) => sum + (parseFloat(item?.price) || 0), 0);
+      const hasZeroPrice = (ctx.cart || []).some(item => item?.price === '' || parseFloat(item?.price) <= 0);
+
+      const userCommRates = currentUser?.commRates || {};
+      const commissionEarned = (ctx.cart || []).reduce((sum, item) => {
+        if(!item) return sum;
+        const rate = parseFloat(userCommRates[item.typeId]) || 0;
+        const itemPrice = parseFloat(item.price) || 0;
+        return sum + ((itemPrice * rate) / 100);
+      }, 0);
+      const netTotal = total - commissionEarned;
+
+      const handleApplyGlobalPrice = (val) => {
+        setGlobalPrice(val);
+        const numVal = val === '' ? '' : parseFloat(val);
+        ctx.setCart(prev => prev.map(item => ({ ...item, price: numVal })));
+      };
+      
+      const handleItemPriceChange = (id, newPrice) => {
+        const numVal = newPrice === '' ? '' : parseFloat(newPrice);
+        ctx.setCart(prev => prev.map(item => item?.id === id ? { ...item, price: numVal } : item));
+      };
+      
+      const handleCheckout = () => {
+        if (!isCampOpen(currentCamp)) return ctx.showNotification('❌ อยู่นอกเวลาทำการ หรือแอดมินปิดรับชั่วคราว');
+
+        if (!ctx.cart || ctx.cart.length === 0 || hasZeroPrice) return;
+        if ((currentUser?.credit || 0) < netTotal) return ctx.showNotification('เครดิตไม่เพียงพอ'); 
+        
+        const newCredit = (currentUser?.credit || 0) - netTotal;
+        ctx.setUser(prev => ({ ...prev, credit: newCredit }));
+        ctx.setUsersDb(prev => prev.map(u => u?.uid === currentUser.uid ? { ...u, credit: newCredit } : u));
+        
+        const newTicket = { 
+          id: 'T' + Date.now(), 
+          uid: currentUser.uid, 
+          username: currentUser.username, 
+          name: currentUser.name,
+          customerName: customerName.trim() || currentUser.name || currentUser.username,
+          campaignId: currentCamp.id, 
+          items: [...ctx.cart], 
+          totalAmount: total, 
+          commissionEarned: commissionEarned,
+          netAmount: netTotal,
+          status: 'pending', 
+          totalWin: 0,
+          createdAt: new Date().toISOString()
+        };
+        ctx.setBetTickets(prev => [...prev, newTicket]);
+        ctx.setCart([]); setGlobalPrice(''); setCustomerName('');
+        ctx.showNotification('✅ ส่งโพยสำเร็จ! บันทึกลงระบบแล้ว');
+        ctx.setView('home');
+      };
+
+      return (
+        <div className="flex flex-col h-screen bg-[var(--bg-app)]">
+          <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-20 shadow-sm">
+            <button onClick={() => ctx.setView('lotto')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+            <h2 className="text-[var(--text-primary)] font-bold text-lg flex-1 text-center">ใส่ราคา</h2>
+            <button onClick={() => {ctx.setCart([]); setGlobalPrice('');}} className="text-[var(--text-danger)] text-sm font-bold">ล้างโพย</button>
+          </div>
+          <div className="flex-1 overflow-y-auto pb-56 p-4">
+            
+            <div className="bg-[var(--bg-input)] p-4 rounded-2xl border border-[var(--border-color)] mb-4 shadow-sm">
+               <label className="text-[var(--text-primary)] text-sm font-bold block mb-2">ระบุชื่อลูกค้า (สำหรับแสดงในบิล)</label>
+               <input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="เช่น ป้าณี, เฮียช้าง..." className="w-full bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-3 text-[var(--text-primary)] text-sm outline-none" />
+            </div>
+
+            <div className="bg-[var(--bg-input)] p-4 rounded-2xl border border-[var(--border-color)] mb-6 shadow-sm">
+               <label className="text-[var(--text-accent-bold)] text-sm font-bold block mb-2">ใส่ราคาเท่ากันทุกตัว</label>
+               <input type="number" value={globalPrice} onChange={(e) => handleApplyGlobalPrice(e.target.value)} placeholder="ระบุราคา..." className="w-full bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl p-3 text-[var(--text-primary)] text-xl font-bold outline-none shadow-inner" />
+            </div>
+
+            <div className="space-y-3">
+              {(ctx.cart || []).map((item) => {
+                if(!item) return null;
+                const itemCommRate = parseFloat(userCommRates[item.typeId]) || 0;
+                return (
+                  <div key={item.id} className={`bg-[var(--bg-panel)] border ${item.price === '' ? 'border-red-500/50' : 'border-[var(--border-color)]'} p-3 rounded-xl flex justify-between items-center shadow-sm`}>
+                    <div className="pl-2 w-1/2">
+                      <div className="text-2xl font-black text-[var(--text-primary)] tracking-widest">{item.number}</div>
+                      <div className="flex gap-1 items-center mt-1">
+                        <div className="text-[10px] text-[var(--text-accent-bold)] font-bold bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/20">{item.typeName}</div>
+                        {itemCommRate > 0 && <div className="text-[9px] text-green-500 font-bold bg-green-500/10 px-1.5 py-0.5 rounded">คอม {itemCommRate}%</div>}
+                      </div>
+                    </div>
+                    <div className="w-1/2 flex items-center justify-end gap-2">
+                      <input type="number" value={item.price === 0 ? '' : item.price} onChange={(e) => handleItemPriceChange(item.id, e.target.value)} className="w-20 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-2 text-[var(--text-primary)] text-right font-bold outline-none" placeholder="ราคา" />
+                      <button onClick={() => ctx.setCart(prev => prev.filter(c => c?.id !== item.id))} className="text-[var(--text-danger)] p-1"><i className="fas fa-trash-alt"></i></button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          <div className="bg-[var(--bg-panel)] border-t border-[var(--border-color)] p-5 fixed bottom-0 w-full max-w-md shadow-2xl z-30">
+            <div className="flex justify-between items-end mb-2">
+              <p className="text-[var(--text-secondary)] text-sm">จำนวน <span className="text-[var(--text-primary)] font-bold">{(ctx.cart || []).length}</span> รายการ</p>
+              <div className="text-right">
+                <p className="text-[var(--text-secondary)] text-sm mb-1">ยอดรวมทั้งหมด</p>
+                <p className="text-xl font-black text-[var(--text-primary)] leading-none">฿ {total.toLocaleString()}</p>
+              </div>
+            </div>
+            {commissionEarned > 0 && (
+              <div className="flex justify-between items-end mb-4 border-t border-[var(--border-color)] pt-2">
+                <p className="text-green-500 text-xs font-bold bg-green-500/10 px-2 py-1 rounded">ส่วนลดค่าคอมรวม</p>
+                <div className="text-right">
+                  <p className="text-green-500 font-bold leading-none">- ฿ {commissionEarned.toLocaleString()}</p>
+                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">ยอดจ่ายจริง: ฿ {netTotal.toLocaleString()}</p>
+                </div>
+              </div>
+            )}
+            <button onClick={handleCheckout} disabled={!ctx.cart || ctx.cart.length === 0 || hasZeroPrice} className={`w-full py-4 mt-2 rounded-2xl font-bold text-xl flex justify-center items-center gap-2 transition-colors ${(!ctx.cart || ctx.cart.length === 0 || hasZeroPrice) ? 'bg-[var(--bg-disabled)] text-[var(--text-muted)]' : 'bg-gradient-to-r from-green-600 to-green-800 text-white shadow-md'}`}><i className="fas fa-check-circle"></i> บันทึกโพยหวย</button>
+          </div>
+        </div>
+      );
+    };
+
+    const UserTicketsView = ({ ctx }) => {
+      const [filterDate, setFilterDate] = useState(getTodayYYYYMMDD());
+      const allMyTickets = (ctx.betTickets || []).filter(t => t?.uid === ctx.user?.uid).reverse();
+      
+      const myTickets = allMyTickets.filter(t => {
+         if(!filterDate) return true;
+         if(!t || !t.createdAt) return false;
+         const tDate = new Date(t.createdAt);
+         const fDate = new Date(filterDate);
+         return tDate.getFullYear() === fDate.getFullYear() && tDate.getMonth() === fDate.getMonth() && tDate.getDate() === fDate.getDate();
+      });
+
+      const [expandedId, setExpandedId] = useState(null);
+      const [longPressedSlip, setLongPressedSlip] = useState(null);
+      const [generatedImage, setGeneratedImage] = useState(null); 
+      const pressTimer = useRef(null);
+
+      const startPress = (ticketId) => {
+        pressTimer.current = setTimeout(() => {
+          setLongPressedSlip(ticketId);
+          if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(50);
+        }, 600); 
+      };
+      const cancelPress = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
+
+      const generateSlipImage = (ticketId) => {
+        setLongPressedSlip(null);
+        setTimeout(async () => {
+          const slipElement = document.getElementById(`slip-${ticketId}`);
+          if (!slipElement) return;
+          if (!window.html2canvas) return ctx.showNotification("ระบบกำลังโหลดเครื่องมือ...");
+          try {
+            ctx.showNotification("กำลังสร้างรูปภาพ...");
+            const canvas = await window.html2canvas(slipElement, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+            setGeneratedImage(canvas.toDataURL("image/png", 1.0)); 
+          } catch (err) { ctx.showNotification("❌ ไม่สามารถสร้างรูปภาพได้"); }
+        }, 150);
+      };
+
+      const handleCancelTicket = (ticket) => {
+        const camp = (ctx.campaigns || []).find(c => c?.id === ticket?.campaignId);
+        if (!canCancelTicket(camp)) return ctx.showNotification("❌ ไม่สามารถยกเลิกได้ (นอกเวลาทำการ หรือเหลือน้อยกว่า 5 นาที)");
+
+        if(window.confirm('คุณต้องการยกเลิกโพยนี้ใช่หรือไม่? เครดิตจะถูกคืนเข้าบัญชีทันที')) {
+          const refundAmount = ticket.netAmount || ticket.totalAmount;
+          
+          const currentUser = (ctx.usersDb || []).find(u => u?.uid === ctx.user?.uid) || ctx.user;
+          const newCredit = (currentUser?.credit || 0) + refundAmount;
+          
+          ctx.setUser(prev => ({ ...prev, credit: newCredit }));
+          ctx.setUsersDb(prev => prev.map(u => u?.uid === currentUser?.uid ? { ...u, credit: newCredit } : u));
+          ctx.setBetTickets(prev => prev.map(t => t?.id === ticket.id ? { ...t, status: 'cancelled' } : t));
+          ctx.showNotification('✅ ยกเลิกโพยสำเร็จ คืนเครดิตเรียบร้อย');
+        }
+      };
+
+      return (
+        <div className="flex flex-col h-screen bg-[var(--bg-app)] relative">
+          <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-20 shadow-sm">
+            <button onClick={() => ctx.setView('home')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+            <h2 className="text-[var(--text-primary)] font-bold text-lg flex-1 text-center">ประวัติโพยของฉัน</h2>
+            <div className="w-10"></div>
+          </div>
+
+          <div className="bg-[var(--bg-panel)] p-3 border-b border-[var(--border-color)]">
+             <div className="flex items-center gap-2">
+               <label className="text-sm font-bold text-[var(--text-secondary)]">ดูโพยวันที่:</label>
+               <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-primary)] p-2 rounded-lg text-sm outline-none" />
+               {filterDate && <button onClick={() => setFilterDate('')} className="bg-red-500/10 text-red-500 px-3 py-2 rounded-lg text-xs font-bold">ดูทั้งหมด</button>}
+             </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 pb-24">
+            {myTickets.length === 0 ? (
+              <div className="text-center text-[var(--text-muted)] mt-20"><i className="fas fa-list-ol text-6xl opacity-20 mb-4"></i><p>ไม่มีประวัติการแทงของวันที่เลือก</p></div>
+            ) : (
+              <div className="space-y-4">
+                {myTickets.map(ticket => {
+                  if(!ticket) return null;
+                  const camp = (ctx.campaigns || []).find(c => c?.id === ticket.campaignId);
+                  const isProcessed = ticket.status === 'processed';
+                  const isCancelled = ticket.status === 'cancelled';
+                  const isExpanded = expandedId === ticket.id;
+
+                  let canCancel = false;
+                  if (ticket.status === 'pending') canCancel = canCancelTicket(camp);
+
+                  return (
+                    <div key={ticket.id} className="bg-[var(--bg-panel)] rounded-2xl border border-[var(--border-color)] overflow-hidden shadow-sm relative">
+                      <div onClick={() => setExpandedId(isExpanded ? null : ticket.id)} className={`p-4 cursor-pointer transition-opacity ${isCancelled ? 'opacity-50' : 'hover:opacity-80'}`}>
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex-1 pr-2">
+                            <h4 className="font-bold text-[var(--text-primary)] text-base leading-tight">{camp?.name || 'ไม่ทราบหวย'}</h4>
+                            <span className="text-[10px] text-[var(--text-muted)] mt-1">บิล: {ticket.id}</span>
+                          </div>
+                          <span className={`px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap ${isCancelled ? 'bg-gray-500/20 text-gray-400' : isProcessed ? 'bg-blue-500/10 text-[var(--text-info)] border border-blue-500/20' : 'bg-yellow-500/10 text-[var(--text-accent-bold)] border border-yellow-500/20'}`}>
+                            {isCancelled ? 'ยกเลิกแล้ว' : isProcessed ? 'ออกผลแล้ว' : 'รอผลรางวัล'}
+                          </span>
+                        </div>
+                        {!isCancelled && (
+                          <div className="flex justify-between items-end mt-3">
+                             <div>
+                               <p className="text-xs text-[var(--text-secondary)]">ยอดแทงรวม</p>
+                               <p className="font-bold text-[var(--text-primary)]">฿ {(ticket.totalAmount || 0).toLocaleString()}</p>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-xs text-[var(--text-secondary)]">ยอดถูกรางวัล</p>
+                               {isProcessed ? (
+                                 <p className={`text-xl font-black ${ticket.totalWin > 0 ? 'text-[var(--text-success)]' : 'text-[var(--text-muted)]'}`}>฿ {(ticket.totalWin || 0).toLocaleString()}</p>
+                               ) : (
+                                 <p className="font-bold text-[var(--text-muted)]">- รอผล -</p>
+                               )}
+                             </div>
+                          </div>
+                        )}
+                        <div className="flex justify-center mt-3 pt-2 border-t border-[var(--border-color)]">
+                          <i className={`fas fa-chevron-down text-[var(--text-muted)] transition-transform ${isExpanded ? 'rotate-180' : ''}`}></i>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="bg-gray-100 p-5 border-t-4 border-dashed border-gray-300 relative">
+                          <div className="text-center mb-2">
+                            <span className="text-[10px] bg-blue-100 text-blue-600 px-3 py-1 rounded-full font-bold shadow-sm border border-blue-200">
+                              <i className="fas fa-hand-pointer"></i> แตะค้างที่บิลขาว เพื่อสร้างรูปภาพ
+                            </span>
+                          </div>
+
+                          <div id={`slip-${ticket.id}`} className="bg-white p-4 rounded shadow-md text-black font-mono text-sm relative select-none" onMouseDown={() => startPress(ticket.id)} onMouseUp={cancelPress} onMouseLeave={cancelPress} onTouchStart={() => startPress(ticket.id)} onTouchEnd={cancelPress} onTouchMove={cancelPress} onContextMenu={(e) => { e.preventDefault(); return false; }}>
+                            <div className="text-center font-bold text-lg mb-1 border-b border-gray-300 pb-2">โพยหวย VIP</div>
+                            <div className="text-center text-xs mb-3 text-gray-600">{camp?.name || '-'}</div>
+                            <div className="text-[10px] text-gray-500 mb-2">วัน-เวลาแทง: {new Date(ticket.createdAt || Date.now()).toLocaleString('th-TH')}</div>
+                            <div className="text-[10px] text-gray-500 mb-2 border-b border-gray-200 pb-2">รหัสบิล: {ticket.id}</div>
+                            
+                            <div className="space-y-1.5 my-3">
+                              {(ticket.items || []).map((item, idx) => {
+                                if(!item) return null;
+                                return (
+                                <div key={idx} className="flex justify-between items-center text-xs">
+                                  <div>
+                                    <span className="font-bold text-sm mr-2">{item.number}</span>
+                                    <span className="text-gray-600">({item.typeName})</span>
+                                  </div>
+                                  <div className="text-right font-bold">
+                                    {item.price} บ.
+                                    {isProcessed && item.isWin && <span className="block text-[10px] text-green-600 bg-green-100 px-1 mt-0.5 rounded">ถูก +{(item.price * item.pay).toLocaleString()}</span>}
+                                  </div>
+                                </div>
+                                )
+                              })}
+                            </div>
+                            
+                            <div className="border-t border-black pt-2 mt-2">
+                               {ticket.commissionEarned > 0 && (
+                                 <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                   <span>ส่วนลด (ค่าคอม)</span>
+                                   <span>-{ticket.commissionEarned.toLocaleString()} บ.</span>
+                                 </div>
+                               )}
+                               <div className="flex justify-between items-end">
+                                 <div className="text-xs text-gray-600 w-1/2 leading-tight mt-2">
+                                   <p>ลูกค้า:</p>
+                                   <p className="font-bold text-sm text-black">{ticket.customerName || ticket.name || ticket.username}</p>
+                                 </div>
+                                 <div className="text-right w-1/2">
+                                   <span className="text-[10px] text-gray-500 block mb-0.5">ยอดรวมสุทธิ (Total)</span>
+                                   <span className="text-xl font-bold text-black">{(ticket.netAmount || ticket.totalAmount || 0).toLocaleString()} บ.</span>
+                                 </div>
+                               </div>
+                            </div>
+                            {isCancelled && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-[1px] z-10">
+                                <div className="border-4 border-red-500 text-red-500 font-black text-2xl px-4 py-2 rotate-[-20deg] opacity-80">ยกเลิกแล้ว</div>
+                              </div>
+                            )}
+                          </div>
+
+                          {longPressedSlip === ticket.id && (
+                             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm rounded-lg animate-in">
+                               <button onClick={() => generateSlipImage(ticket.id)} className="bg-green-500 text-white font-bold py-4 px-6 rounded-xl shadow-xl flex items-center gap-2 hover:bg-green-600 transition-colors">
+                                 <i className="fas fa-image"></i> สร้างรูปภาพบิลหวย
+                               </button>
+                               <button onClick={() => setLongPressedSlip(null)} className="mt-4 text-gray-300 underline font-medium">ยกเลิก</button>
+                             </div>
+                          )}
+
+                          {canCancel && !isCancelled && (
+                            <button onClick={() => handleCancelTicket(ticket)} className="w-full mt-4 py-3 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white rounded-xl font-bold text-sm transition-colors flex justify-center items-center gap-2">
+                              <i className="fas fa-times-circle"></i> ยกเลิกโพยนี้ (คืนเครดิต)
+                            </button>
+                          )}
+                          {!canCancel && !isProcessed && !isCancelled && (
+                            <p className="text-center text-[10px] text-gray-500 mt-3">* หมดเวลายกเลิกโพยแล้ว (เหลือน้อยกว่า 5 นาที)</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {generatedImage && (
+            <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 p-4 animate-in">
+              <div className="bg-green-500/20 text-green-400 border border-green-500/50 px-4 py-2 rounded-xl mb-4 text-center text-sm font-bold shadow-lg">
+                ✅ สร้างรูปสำเร็จ!<br/>แตะค้างที่รูปด้านล่าง แล้วเลือก "บันทึกรูปภาพ" 
+              </div>
+              <div className="relative max-h-[60vh] overflow-y-auto rounded-lg shadow-[0_0_40px_rgba(255,255,255,0.2)] border-4 border-gray-300 bg-white">
+                <img src={generatedImage} alt="Slip" className="w-full object-contain select-auto" style={{ pointerEvents: 'auto', WebkitTouchCallout: 'default' }} />
+              </div>
+              <button onClick={() => setGeneratedImage(null)} className="mt-8 bg-white text-black font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-200 transition-colors">ปิดหน้าต่าง</button>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const SalesSummaryView = ({ ctx }) => {
+      const myTickets = (ctx.betTickets || []).filter(t => t?.uid === ctx.user?.uid && t?.status !== 'cancelled');
+      const totalSales = myTickets.reduce((sum, t) => sum + (t?.totalAmount || 0), 0);
+      const totalCommission = myTickets.reduce((sum, t) => sum + (t?.commissionEarned || 0), 0);
+      
+      const salesByCamp = {};
+      myTickets.forEach(t => {
+        if(!t) return;
+        if (!salesByCamp[t.campaignId]) salesByCamp[t.campaignId] = { count: 0, sales: 0, comm: 0, win: 0 };
+        salesByCamp[t.campaignId].count += 1;
+        salesByCamp[t.campaignId].sales += (t.totalAmount || 0);
+        salesByCamp[t.campaignId].comm += (t.commissionEarned || 0);
+        salesByCamp[t.campaignId].win += (t.totalWin || 0);
+      });
+
+      return (
+        <div className="flex flex-col h-screen bg-[var(--bg-app)]">
+          <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-20 shadow-sm">
+            <button onClick={() => ctx.setView('home')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+            <h2 className="text-[var(--text-primary)] font-bold text-lg flex-1 text-center">ยอดขาย / ค่าคอม</h2>
+            <div className="w-10"></div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-6">
+            <div className="bg-gradient-to-r from-purple-900/50 to-[var(--bg-panel)] p-5 rounded-2xl border border-purple-500/30 shadow-sm">
+              <div className="flex items-center gap-2 mb-4"><i className="fas fa-chart-pie text-purple-400 text-xl"></i><h3 className="font-bold text-[var(--text-primary)]">สรุปยอดขายทั้งหมดของคุณ</h3></div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div className="bg-[var(--bg-input)] p-3 rounded-xl border border-[var(--border-color)] text-center">
+                   <p className="text-xs text-[var(--text-secondary)] mb-1">ยอดแทงรวม</p>
+                   <p className="text-2xl font-black text-[var(--text-primary)]">฿{totalSales.toLocaleString()}</p>
+                 </div>
+                 <div className="bg-[var(--bg-input)] p-3 rounded-xl border border-green-500/30 text-center">
+                   <p className="text-xs text-green-500 mb-1">ค่าคอมมิชชั่นรวม</p>
+                   <p className="text-2xl font-black text-green-500">฿{totalCommission.toLocaleString()}</p>
+                 </div>
+              </div>
+            </div>
+            <div>
+              <h3 className="font-bold text-[var(--text-primary)] mb-3 text-sm flex items-center gap-2"><div className="w-1.5 h-4 bg-purple-500 rounded-full"></div> แยกตามรอบหวย (เฉพาะบิลที่ไม่ยกเลิก)</h3>
+              <div className="space-y-3">
+                 {Object.keys(salesByCamp).length === 0 && <div className="text-center text-[var(--text-muted)] p-6 bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)]">ยังไม่มียอดขาย</div>}
+                 {Object.entries(salesByCamp).map(([campId, data]) => {
+                    const camp = (ctx.campaigns || []).find(c => c?.id === parseInt(campId));
+                    return (
+                      <div key={campId} className="bg-[var(--bg-panel)] p-4 rounded-xl border border-[var(--border-color)] shadow-sm">
+                         <h4 className="font-bold text-[var(--text-primary)] mb-2 border-b border-[var(--border-color)] pb-2">{camp?.name || 'ไม่ทราบหวย'}</h4>
+                         <div className="flex justify-between text-sm mb-1"><span className="text-[var(--text-secondary)]">จำนวนโพย:</span><span className="font-bold text-[var(--text-primary)]">{data.count} ใบ</span></div>
+                         <div className="flex justify-between text-sm mb-1"><span className="text-[var(--text-secondary)]">ยอดแทง (Sales):</span><span className="font-bold text-[var(--text-accent-bold)]">฿{data.sales.toLocaleString()}</span></div>
+                         <div className="flex justify-between text-sm mb-1"><span className="text-[var(--text-secondary)]">ค่าคอม (Comm):</span><span className="font-bold text-green-500">฿{data.comm.toLocaleString()}</span></div>
+                         <div className="flex justify-between text-sm pt-2 mt-2 border-t border-[var(--border-color)]"><span className="text-[var(--text-secondary)]">ยอดลูกค้าถูกรางวัล:</span><span className="font-bold text-[var(--text-info)]">฿{data.win.toLocaleString()}</span></div>
+                      </div>
+                    )
+                 })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    };
+
+    const ResultsView = ({ ctx }) => {
+      const [filterDate, setFilterDate] = useState(getTodayYYYYMMDD());
+      
+      let allResults = [];
+      (ctx.campaigns || []).forEach(camp => {
+        if (!camp) return;
+        if (camp.resultsHistory && camp.resultsHistory.length > 0) {
+          camp.resultsHistory.forEach(history => { allResults.push({ campName: camp.name, ...history }); });
+        } else if (camp.status === 'completed' && camp.results) {
+          allResults.push({ campName: camp.name, dateStr: '-', top3: camp.results.top3, bot2: camp.results.bot2, id: camp.id, fullDate: new Date().toISOString() });
+        }
+      });
+      
+      allResults.sort((a,b) => b.id - a.id);
+
+      const filteredResults = allResults.filter(res => {
+        if (!filterDate) return true;
+        if (!res.fullDate) return false;
+        const rDate = new Date(res.fullDate);
+        const fDate = new Date(filterDate);
+        return rDate.getFullYear() === fDate.getFullYear() && rDate.getMonth() === fDate.getMonth() && rDate.getDate() === fDate.getDate();
+      });
+
+      return (
+        <div className="flex flex-col h-screen bg-[var(--bg-app)]">
+          <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-20 shadow-sm">
+            <button onClick={() => ctx.setView('home')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+            <h2 className="text-[var(--text-primary)] font-bold text-lg flex-1 text-center">ผลรางวัลย้อนหลัง</h2>
+            <div className="w-10"></div>
+          </div>
+          
+          <div className="bg-[var(--bg-panel)] p-3 border-b border-[var(--border-color)]">
+             <div className="flex items-center gap-2">
+               <label className="text-sm font-bold text-[var(--text-secondary)]">ดูผลของวันที่:</label>
+               <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-primary)] p-2 rounded-lg text-sm outline-none" />
+               {filterDate && <button onClick={() => setFilterDate('')} className="bg-red-500/10 text-red-500 px-3 py-2 rounded-lg text-xs font-bold">ดูทั้งหมด</button>}
+             </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 pb-24">
+             {filteredResults.length === 0 ? (
+               <div className="text-center text-[var(--text-muted)] mt-20"><i className="fas fa-medal text-6xl opacity-20 mb-4"></i><p>ไม่มีการออกผลรางวัลในวันที่เลือก</p></div>
+             ) : (
+               <div className="space-y-4">
+                 {filteredResults.map(res => (
+                   <div key={res.id} className="bg-[var(--bg-panel)] rounded-2xl border border-[var(--border-color)] overflow-hidden shadow-sm">
+                     <div className="bg-[var(--bg-input)] p-3 border-b border-[var(--border-color)] text-center">
+                       <h3 className="font-bold text-[var(--text-primary)]">{res.campName}</h3>
+                       {res.dateStr && <p className="text-[10px] text-[var(--text-secondary)]">{res.dateStr}</p>}
+                     </div>
+                     <div className="p-5 flex justify-around items-center">
+                       <div className="text-center">
+                         <p className="text-xs text-[var(--text-secondary)] mb-1">3 ตัวบน</p>
+                         <p className="text-4xl font-black text-[var(--text-accent-bold)] tracking-widest">{res.top3 || '-'}</p>
+                       </div>
+                       <div className="w-px h-12 bg-[var(--border-color)]"></div>
+                       <div className="text-center">
+                         <p className="text-xs text-[var(--text-secondary)] mb-1">2 ตัวล่าง</p>
+                         <p className="text-4xl font-black text-[var(--text-primary)] tracking-widest">{res.bot2 || '-'}</p>
+                       </div>
+                     </div>
+                   </div>
+                 ))}
+               </div>
+             )}
+          </div>
+        </div>
+      )
+    };
+
+    const ContactView = ({ ctx }) => (
+      <div className="flex flex-col h-screen bg-[var(--bg-app)]">
+        <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] shadow-sm">
+          <button onClick={() => ctx.setView('home')} className="p-2 bg-[var(--bg-input)] rounded-xl text-[var(--text-primary)] border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+          <h2 className="text-[var(--text-primary)] font-bold text-lg flex-1 text-center">ติดต่อแอดมิน</h2>
+          <div className="w-10"></div>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-32 h-32 bg-[var(--bg-panel)] rounded-3xl border border-green-500/30 flex items-center justify-center mb-6 shadow-sm"><i className="fas fa-comment-dots text-green-500 text-6xl"></i></div>
+          <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-2">แอดมิน VIP พร้อมดูแล</h2>
+          <p className="text-[var(--text-secondary)] mb-8">หากมีปัญหาการใช้งาน, ต้องการฝาก-ถอน หรือสอบถามข้อสงสัย สามารถติดต่อได้ตลอด 24 ชั่วโมง</p>
+          <button className="w-full py-4 bg-green-600 text-white rounded-xl font-bold text-lg shadow-lg flex justify-center items-center gap-2">เพิ่มเพื่อน LINE</button>
+        </div>
+      </div>
+    );
+
+    const AdminView = ({ ctx }) => {
+      const [adminTab, setAdminTab] = useState('campaigns'); 
+      const [selectedCamp, setSelectedCamp] = useState(null); 
+      const [campTab, setCampTab] = useState('info'); 
+      const [filterDate, setFilterDate] = useState(getTodayYYYYMMDD());
+      
+      const [newUser, setNewUser] = useState({ username: '', password: '', name: '', credit: '', commRates: {...DEFAULT_COMM_RATES} });
+      const [showNewCommSetup, setShowNewCommSetup] = useState(false);
+
+      const [editingUser, setEditingUser] = useState(null); 
+      const [customCreditAmount, setCustomCreditAmount] = useState(''); 
+      const [editingCommRates, setEditingCommRates] = useState({});
+
+      const [newCampaign, setNewCampaign] = useState({ name: '', openTime: ctx.timeDefaults?.openTime || '', closeTime: ctx.timeDefaults?.closeTime || '' });
+      const [blockInput, setBlockInput] = useState('');
+      const [resultInput, setResultInput] = useState({ top3: '', bot2: '' });
+
+      const handleCreateUser = (e) => {
+        e.preventDefault();
+        if (!newUser.username || !newUser.password || !newUser.name || !newUser.credit) return ctx.showNotification('กรุณากรอกให้ครบ');
+        if ((ctx.usersDb || []).find(u => u?.username === newUser.username)) return ctx.showNotification('Username ซ้ำ!');
+        
+        ctx.setUsersDb(prev => [...prev, { uid: 'VIP' + Math.floor(1000 + Math.random() * 9000), username: newUser.username, password: newUser.password, name: newUser.name, credit: parseFloat(newUser.credit), commRates: newUser.commRates, role: 'user' }]);
+        setNewUser({ username: '', password: '', name: '', credit: '', commRates: {...DEFAULT_COMM_RATES} });
+        setShowNewCommSetup(false);
+        ctx.showNotification('✅ สร้างสมาชิกสำเร็จ!');
+      };
+
+      const handleUpdateCredit = (uid, amount) => {
+        ctx.setUsersDb(prev => prev.map(u => u?.uid === uid ? { ...u, credit: Math.max(0, (u.credit||0) + amount) } : u));
+        setCustomCreditAmount('');
+        ctx.showNotification('ปรับเครดิตสำเร็จ');
+      };
+
+      const handleUpdateComm = (uid) => {
+        ctx.setUsersDb(prev => prev.map(u => u?.uid === uid ? { ...u, commRates: editingCommRates } : u));
+        ctx.showNotification('บันทึกค่าคอมมิชชั่นสำเร็จ');
+      };
+
+      const handleAddCampaign = (e) => {
+        e.preventDefault();
+        if(!newCampaign.name || !newCampaign.openTime || !newCampaign.closeTime) return ctx.showNotification('กรุณาใส่ชื่อและเวลา');
+        ctx.setTimeDefaults({ openTime: newCampaign.openTime, closeTime: newCampaign.closeTime });
+        ctx.setCampaigns(prev => [{ id: Date.now(), name: newCampaign.name, openTime: newCampaign.openTime, closeTime: newCampaign.closeTime, status: 'active', blockedNumbers: [], payRates: JSON.parse(JSON.stringify(DEFAULT_PAY_RATES)), resultsHistory: [] }, ...prev]);
+        setNewCampaign({ ...newCampaign, name: '' });
+        ctx.showNotification('เพิ่มรอบหวยรายวันสำเร็จ');
+      };
+
+      const handleDeleteCampaign = (id) => {
+        if(window.confirm('⚠️ ยืนยันการลบหวยรอบนี้? ข้อมูลหวยนี้จะหายไปจากระบบทันที')) {
+          ctx.setCampaigns(prev => prev.filter(c => c.id !== id));
+          ctx.showNotification('ลบหวยสำเร็จ');
+        }
+      }
+
+      const updateActiveCamp = (updatedCamp) => {
+        setSelectedCamp(updatedCamp); 
+        ctx.setCampaigns(prev => prev.map(c => c?.id === updatedCamp.id ? updatedCamp : c));
+      };
+
+      const handleProcessResults = () => {
+        const top3 = resultInput.top3.trim();
+        const bot2 = resultInput.bot2.trim();
+        if(top3.length !== 3 || bot2.length !== 2) return ctx.showNotification('กรุณากรอก 3ตัวบน และ 2ตัวล่าง ให้ถูกต้อง');
+
+        const pendingTickets = (ctx.betTickets || []).filter(t => t?.campaignId === selectedCamp.id && t?.status === 'pending');
+        let totalPayoutAll = 0;
+        const winsPerUser = {};
+        
+        const processedTickets = pendingTickets.map(ticket => {
+          if(!ticket) return null;
+          let ticketWinAmount = 0;
+          const newItems = (ticket.items || []).map(item => {
+            if(!item) return null;
+            let isWin = false;
+            const betNum = item.number;
+            if (item.typeId === '3_top' && betNum === top3) isWin = true;
+            else if (item.typeId === '3_tod' && betNum.split('').sort().join('') === top3.split('').sort().join('')) isWin = true;
+            else if (item.typeId === '2_top' && betNum === top3.slice(-2)) isWin = true;
+            else if (item.typeId === '2_bot' && betNum === bot2) isWin = true;
+            else if (item.typeId === '1_top' && top3.includes(betNum)) isWin = true;
+            else if (item.typeId === '1_bot' && bot2.includes(betNum)) isWin = true;
+            
+            if (isWin) ticketWinAmount += (item.price || 0) * (item.pay || 0);
+            return { ...item, isWin };
+          });
+
+          if (ticketWinAmount > 0) {
+            totalPayoutAll += ticketWinAmount;
+            winsPerUser[ticket.uid] = (winsPerUser[ticket.uid] || 0) + ticketWinAmount;
+          }
+          return { ...ticket, items: newItems, status: 'processed', totalWin: ticketWinAmount };
+        });
+
+        ctx.setUsersDb(prev => prev.map(u => {
+          if(!u) return u;
+          return winsPerUser[u.uid] ? { ...u, credit: (u.credit||0) + winsPerUser[u.uid] } : u;
+        }));
+        
+        ctx.setBetTickets(prev => [...prev.filter(t => !(t?.campaignId === selectedCamp.id && t?.status === 'pending')), ...processedTickets]);
+        
+        const newResult = { id: Date.now(), dateStr: new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }), fullDate: new Date().toISOString(), top3, bot2 };
+        updateActiveCamp({ ...selectedCamp, resultsHistory: [newResult, ...(selectedCamp.resultsHistory || [])] });
+
+        setResultInput({ top3: '', bot2: '' });
+        ctx.showNotification(`✅ ออกผลสำเร็จ! จ่าย ฿${totalPayoutAll.toLocaleString()}`);
+        setAdminTab('campaigns'); setSelectedCamp(null);
+      };
+
+      const handleClearHistory = () => {
+        if(window.confirm('⚠️ ต้องการเคลียร์ "โพยเก่า" และ "ผลรางวัลย้อนหลัง" เพื่อให้ระบบเร็วขึ้นใช่หรือไม่?\n\n(สมาชิก, เงินเครดิต และรายชื่อหวยจะยังอยู่ครบ)')) {
+            ctx.setBetTickets([]);
+            ctx.setCampaigns(prev => prev.map(c => ({...c, resultsHistory: []})));
+            ctx.showNotification('✅ ล้างประวัติเก่าสำเร็จ ระบบเบาขึ้นแล้ว');
+        }
+      };
+
+      const handleFactoryReset = () => {
+        if(window.confirm('⚠️ คำเตือนอันตราย!\nคุณต้องการลบข้อมูลทั้งหมดในระบบใช่หรือไม่?')) {
+          if(window.confirm('กรุณายืนยันอีกครั้ง ข้อมูลจะไม่สามารถกู้คืนได้แน่ใจหรือไม่?')) {
+            window.localStorage.clear();
+            ctx.showNotification('ล้างข้อมูลระบบเรียบร้อยแล้ว กำลังรีสตาร์ท...');
+            setTimeout(() => window.location.reload(), 1000);
+          }
+        }
+      }
+
+      if (selectedCamp) {
+        return (
+          <div className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] pb-20">
+            <div className="bg-[var(--bg-panel)] p-4 flex items-center gap-3 border-b border-[var(--border-color)] sticky top-0 z-10 shadow-sm">
+              <button onClick={() => setSelectedCamp(null)} className="p-2 bg-[var(--bg-input)] rounded-lg border border-[var(--border-color)]"><i className="fas fa-chevron-left"></i></button>
+              <div className="flex-1">
+                <h2 className="font-bold truncate text-sm">{selectedCamp.name}</h2>
+                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${selectedCamp.status === 'active' ? 'bg-green-500/10 text-[var(--text-success)]' : 'bg-red-500/10 text-[var(--text-danger)]'}`}>สถานะ: {selectedCamp.status === 'active' ? 'เปิดรับ (รายวัน)' : 'ปิดรับชั่วคราว'}</span>
+              </div>
+            </div>
+            <div className="flex overflow-x-auto bg-[var(--bg-panel)] p-2 border-b border-[var(--border-color)] text-sm font-bold">
+              <button onClick={() => setCampTab('info')} className={`px-4 py-2 rounded-lg whitespace-nowrap ${campTab==='info' ? 'bg-[var(--bg-input)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>ข้อมูล</button>
+              <button onClick={() => setCampTab('block')} className={`px-4 py-2 rounded-lg whitespace-nowrap ${campTab==='block' ? 'bg-red-500/10 text-[var(--text-danger)]' : 'text-[var(--text-secondary)]'}`}>เลขอั้น</button>
+              <button onClick={() => setCampTab('rate')} className={`px-4 py-2 rounded-lg whitespace-nowrap ${campTab==='rate' ? 'bg-yellow-500/10 text-[var(--text-accent-bold)]' : 'text-[var(--text-secondary)]'}`}>อัตราจ่าย</button>
+              <button onClick={() => setCampTab('result')} className={`px-4 py-2 rounded-lg whitespace-nowrap ${campTab==='result' ? 'bg-blue-500/10 text-[var(--text-info)]' : 'text-[var(--text-secondary)]'}`}>ออกผล</button>
+            </div>
+            <div className="p-4">
+              {campTab === 'info' && (
+                <div className="space-y-4">
+                   <button onClick={() => updateActiveCamp({...selectedCamp, status: selectedCamp.status === 'active' ? 'paused' : 'active'})} className="w-full py-3 rounded-lg border border-[var(--border-color)] font-bold bg-[var(--bg-panel)] shadow-sm">
+                     สลับเป็น {selectedCamp.status === 'active' ? 'ปิดรับชั่วคราว' : 'เปิดรับตามปกติ'}
+                   </button>
+                   <div className="bg-[var(--bg-panel)] p-4 rounded-xl border border-[var(--border-color)]">
+                     <p className="text-xs text-[var(--text-secondary)] mb-1">เวลาเริ่มเปิดรับ</p><p className="font-bold text-[var(--text-primary)]">{selectedCamp.openTime || '-'}</p>
+                     <div className="h-px w-full bg-[var(--border-color)] my-2"></div>
+                     <p className="text-xs text-[var(--text-secondary)] mb-1">เวลาปิดรับ (ตัดยอด)</p><p className="font-bold text-[var(--text-danger)]">{selectedCamp.closeTime || '-'}</p>
+                   </div>
+                </div>
+              )}
+              {campTab === 'block' && (
+                <div className="animate-in fade-in">
+                  <div className="flex gap-2 mb-4">
+                    <input type="text" value={blockInput} onChange={e=>setBlockInput(e.target.value.replace(/\D/g, ''))} className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-[var(--text-primary)] outline-none" placeholder="ใส่เลขที่อั้น" />
+                    <button onClick={() => { if(blockInput && !(selectedCamp.blockedNumbers||[]).includes(blockInput)){ updateActiveCamp({ ...selectedCamp, blockedNumbers: [blockInput, ...(selectedCamp.blockedNumbers||[])] }); setBlockInput(''); } }} className="bg-red-600 text-white px-4 rounded-lg font-bold">อั้นเลข</button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(selectedCamp.blockedNumbers || []).map(num => (
+                      <div key={num} className="bg-red-500/10 border border-red-500/20 text-[var(--text-danger)] p-2 rounded-lg flex justify-between items-center font-bold">
+                        {num} <button onClick={() => updateActiveCamp({ ...selectedCamp, blockedNumbers: selectedCamp.blockedNumbers.filter(n => n !== num) })}><i className="fas fa-trash-alt text-xs"></i></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {campTab === 'rate' && (
+                <div className="space-y-2">
+                  {Object.entries(selectedCamp.payRates || DEFAULT_PAY_RATES).map(([id, rateData]) => (
+                    <div key={id} className="bg-[var(--bg-panel)] border border-[var(--border-color)] p-3 rounded-xl flex justify-between items-center shadow-sm">
+                      <span className="font-bold text-[var(--text-primary)]">{rateData.name}</span>
+                      <input type="number" value={rateData.pay === '' ? '' : rateData.pay} onChange={e => { const val = e.target.value; const newPay = val === '' ? '' : parseFloat(val); updateActiveCamp({ ...selectedCamp, payRates: { ...selectedCamp.payRates, [id]: { ...rateData, pay: newPay } } }); }} className="w-20 bg-[var(--bg-input)] border border-[var(--border-color)] rounded p-1.5 text-[var(--text-accent-bold)] text-right font-bold outline-none" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {campTab === 'result' && (
+                 <div className="animate-in fade-in">
+                   <div className="bg-[var(--bg-panel)] border border-[var(--border-color)] p-5 rounded-2xl shadow-sm">
+                     <div className="space-y-4">
+                       <input type="text" maxLength="3" value={resultInput.top3} onChange={e=>setResultInput({...resultInput, top3: e.target.value.replace(/\D/g, '')})} placeholder="3 ตัวบน" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-4 text-center text-3xl font-mono text-[var(--text-accent-bold)] font-bold outline-none" />
+                       <input type="text" maxLength="2" value={resultInput.bot2} onChange={e=>setResultInput({...resultInput, bot2: e.target.value.replace(/\D/g, '')})} placeholder="2 ตัวล่าง" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-4 text-center text-3xl font-mono text-[var(--text-accent-bold)] font-bold outline-none" />
+                       <button onClick={handleProcessResults} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-md">ยืนยันผลของวันนี้ & จ่ายเงินออโต้</button>
+                     </div>
+                   </div>
+                 </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      const allFilteredTickets = (ctx.betTickets || []).filter(t => {
+         if(!filterDate) return true;
+         if(!t || !t.createdAt) return false;
+         const tDate = new Date(t.createdAt);
+         const fDate = new Date(filterDate);
+         return tDate.getFullYear() === fDate.getFullYear() && tDate.getMonth() === fDate.getMonth() && tDate.getDate() === fDate.getDate();
+      });
+
+      const activeTickets = allFilteredTickets.filter(t => t?.status !== 'cancelled');
+      const totalBetAll = activeTickets.reduce((sum, t) => sum + (t?.totalAmount || 0), 0);
+      const totalCommAll = activeTickets.reduce((sum, t) => sum + (t?.commissionEarned || 0), 0);
+      const totalPayoutAll = activeTickets.reduce((sum, t) => sum + (t?.totalWin || 0), 0);
+      const totalProfit = totalBetAll - totalCommAll - totalPayoutAll;
+
+      return (
+        <div className="min-h-screen bg-[var(--bg-body)] text-[var(--text-primary)] pb-20">
+          <div className="bg-[var(--bg-panel)] p-4 flex justify-between items-center border-b border-[var(--border-color)] sticky top-0 z-10 shadow-sm">
+            <div className="flex items-center gap-2"><div className="bg-red-600 p-1.5 rounded-lg"><i className="fas fa-cog text-white"></i></div><h1 className="font-black text-lg tracking-wider">ADMIN</h1></div>
+            <div className="flex items-center gap-2">
+              <ThemeToggle ctx={ctx} />
+              <button onClick={() => { ctx.setUser(null); ctx.setView('login'); }} className="text-[var(--text-danger)] bg-red-500/10 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-1"><i className="fas fa-sign-out-alt"></i> ออก</button>
+            </div>
+          </div>
+
+          <div className="flex bg-[var(--bg-app)] p-2 gap-2 border-b border-[var(--border-color)] overflow-x-auto">
+            <button onClick={() => setAdminTab('campaigns')} className={`px-4 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${adminTab === 'campaigns' ? 'bg-red-600 text-white shadow-md' : 'bg-[var(--bg-panel)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>รอบหวย</button>
+            <button onClick={() => setAdminTab('members')} className={`px-4 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${adminTab === 'members' ? 'bg-blue-600 text-white shadow-md' : 'bg-[var(--bg-panel)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>สมาชิก</button>
+            <button onClick={() => setAdminTab('tickets')} className={`px-4 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${adminTab === 'tickets' ? 'bg-green-600 text-white shadow-md' : 'bg-[var(--bg-panel)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>ประวัติแทง</button>
+            <button onClick={() => setAdminTab('system')} className={`px-4 py-2.5 rounded-xl font-bold transition-all whitespace-nowrap ${adminTab === 'system' ? 'bg-purple-600 text-white shadow-md' : 'bg-[var(--bg-panel)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>⚙️ ระบบ</button>
+          </div>
+
+          <div className="p-4">
+            {adminTab === 'campaigns' && (
+              <div className="space-y-6 animate-in fade-in">
+                <div className="bg-[var(--bg-panel)] p-5 rounded-2xl border border-[var(--border-color)] shadow-sm">
+                  <h2 className="text-base font-bold text-[var(--text-accent-bold)] mb-3">สร้างรอบหวยใหม่ (ทำงานรายวัน)</h2>
+                  <form onSubmit={handleAddCampaign} className="space-y-3">
+                    <input type="text" value={newCampaign.name} onChange={e => setNewCampaign({...newCampaign, name: e.target.value})} placeholder="ชื่อหวย เช่น หวยลาว" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-[var(--text-primary)] text-sm outline-none" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-[10px] text-[var(--text-secondary)] ml-1">เวลาเริ่ม (HH:mm)</label><input type="time" value={newCampaign.openTime} onChange={e => setNewCampaign({...newCampaign, openTime: e.target.value})} className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-2 text-[var(--text-primary)] text-sm outline-none font-mono" /></div>
+                      <div><label className="text-[10px] text-[var(--text-secondary)] ml-1">เวลาปิดรับ (HH:mm)</label><input type="time" value={newCampaign.closeTime} onChange={e => setNewCampaign({...newCampaign, closeTime: e.target.value})} className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-2 text-[var(--text-primary)] text-sm outline-none font-mono" /></div>
+                    </div>
+                    <button type="submit" className="w-full bg-yellow-500 text-black font-bold py-2.5 rounded-lg text-sm shadow-md">สร้างหวย</button>
+                  </form>
+                </div>
+
+                <div>
+                  <h3 className="font-bold text-[var(--text-primary)] mb-3 text-sm">จัดการหวย (กดเพื่อตั้งค่า)</h3>
+                  <div className="space-y-3">
+                    {(ctx.campaigns || []).map(camp => {
+                      if(!camp) return null;
+                      return (
+                      <div key={camp.id} className="w-full bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] flex items-center shadow-sm overflow-hidden">
+                        <button onClick={() => { setSelectedCamp(camp); setCampTab('info'); }} className="flex-1 p-4 flex justify-between items-center text-left hover:bg-[var(--bg-input)] transition-colors">
+                          <div>
+                            <h4 className="font-bold text-[var(--text-primary)]">{camp.name}</h4>
+                            <p className="text-[11px] text-[var(--text-secondary)] mt-1">อั้น: {(camp.blockedNumbers || []).length} | {camp.status === 'active' ? `เปิดทุกวัน: ${camp.openTime}-${camp.closeTime}` : 'ถูกปิดชั่วคราว'}</p>
+                          </div>
+                          <i className="fas fa-chevron-right text-[var(--text-muted)]"></i>
+                        </button>
+                        <button onClick={() => handleDeleteCampaign(camp.id)} className="p-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-colors h-full flex items-center justify-center">
+                           <i className="fas fa-trash-alt"></i>
+                        </button>
+                      </div>
+                      )
+                    })}
+                    {(ctx.campaigns || []).length === 0 && <div className="text-center text-[var(--text-muted)] p-4">ยังไม่ได้สร้างหวย</div>}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {adminTab === 'members' && (
+              <div className="animate-in fade-in space-y-6">
+                 <div className="bg-[var(--bg-panel)] p-5 rounded-2xl border border-[var(--border-color)] shadow-sm">
+                  <h2 className="text-base font-bold text-[var(--text-info)] mb-3">สร้างสมาชิก/เอเย่นต์</h2>
+                  <form onSubmit={handleCreateUser} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="text" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} placeholder="Username" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-sm outline-none text-[var(--text-primary)]" />
+                      <input type="text" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} placeholder="Password" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-sm outline-none text-[var(--text-primary)]" />
+                    </div>
+                    <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} placeholder="ชื่อลูกค้า" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-sm outline-none text-[var(--text-primary)]" />
+                    <input type="number" value={newUser.credit} onChange={e => setNewUser({...newUser, credit: e.target.value})} placeholder="เครดิตเริ่มต้น" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-lg p-3 text-[var(--text-accent-bold)] font-bold outline-none" />
+                    
+                    <button type="button" onClick={() => setShowNewCommSetup(!showNewCommSetup)} className="w-full py-2 bg-[var(--bg-input)] text-[var(--text-secondary)] border border-[var(--border-color)] rounded-lg text-xs font-bold hover:text-[var(--text-primary)]">
+                      {showNewCommSetup ? 'ซ่อนตั้งค่าค่าคอมมิชชั่น' : '⚙️ ตั้งค่าค่าคอมมิชชั่นรายประเภท'}
+                    </button>
+                    
+                    {showNewCommSetup && (
+                      <div className="grid grid-cols-2 gap-2 bg-[var(--bg-body)] p-3 rounded-lg border border-[var(--border-color)]">
+                        {Object.keys(DEFAULT_COMM_RATES).map(k => (
+                          <div key={k} className="flex items-center gap-2">
+                            <span className="text-[10px] text-[var(--text-secondary)] w-12">{DEFAULT_PAY_RATES[k].name}</span>
+                            <input type="number" value={newUser.commRates[k] === 0 ? '' : newUser.commRates[k]} onChange={(e) => setNewUser({...newUser, commRates: {...newUser.commRates, [k]: parseFloat(e.target.value)||0}})} placeholder="0%" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded p-1.5 text-xs text-[var(--text-primary)] outline-none" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button type="submit" className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg text-sm shadow-md mt-2">บันทึกสมาชิก</button>
+                  </form>
+                </div>
+                <div>
+                  <h3 className="font-bold text-[var(--text-primary)] mb-3 text-sm">รายชื่อสมาชิกและจัดการ</h3>
+                  {(ctx.usersDb || []).filter(u => u?.role !== 'admin').map(u => {
+                    if(!u) return null;
+                    const userCommRates = u.commRates || {};
+                    const hasComm = Object.values(userCommRates).some(v => (parseFloat(v)||0) > 0);
+                    return (
+                      <div key={u.uid} className="bg-[var(--bg-panel)] p-3 rounded-xl border border-[var(--border-color)] mb-2 shadow-sm">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <span className="font-bold text-[var(--text-info)] text-sm">{u.username}</span>
+                            <div className="text-xs text-[var(--text-secondary)] mt-0.5">{u.name} (Pass: {u.password})</div>
+                            {hasComm && <div className="text-[9px] text-green-500 font-bold mt-1 bg-green-500/10 inline-block px-1.5 rounded">รับค่าคอมรายประเภท</div>}
+                          </div>
+                          <div className="text-right flex flex-col items-end">
+                            <span className="text-[var(--text-accent-bold)] font-bold text-sm mb-1">฿ {(u.credit||0).toLocaleString()}</span>
+                            <button onClick={() => { 
+                              if (editingUser === u.uid) { setEditingUser(null); } 
+                              else { setEditingUser(u.uid); setCustomCreditAmount(''); setEditingCommRates(u.commRates || DEFAULT_COMM_RATES); }
+                            }} className="text-xs bg-[var(--bg-input)] text-[var(--text-primary)] px-2 py-1 rounded flex items-center gap-1 border border-[var(--border-color)]"><i className="fas fa-edit"></i> ตั้งค่า</button>
+                          </div>
+                        </div>
+                        
+                        {editingUser === u.uid && (
+                          <div className="mt-3 pt-3 border-t border-[var(--border-color)] flex flex-col gap-3 animate-in slide-in-from-top-2">
+                            <div className="flex gap-2">
+                              <input type="number" value={customCreditAmount} onChange={(e) => setCustomCreditAmount(e.target.value)} placeholder="เงินเครดิต..." className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] outline-none" />
+                              <button onClick={() => { const amt = parseFloat(customCreditAmount); if(!isNaN(amt) && amt > 0) handleUpdateCredit(u.uid, amt); }} className="bg-green-500/20 text-[var(--text-success)] px-3 py-2 rounded font-bold text-xs hover:bg-green-500/30 transition-colors">+ เพิ่ม</button>
+                              <button onClick={() => { const amt = parseFloat(customCreditAmount); if(!isNaN(amt) && amt > 0) handleUpdateCredit(u.uid, -amt); }} className="bg-red-500/20 text-[var(--text-danger)] px-3 py-2 rounded font-bold text-xs hover:bg-red-500/30 transition-colors">- ลด</button>
+                            </div>
+                            
+                            <div className="bg-[var(--bg-body)] p-3 rounded-xl border border-[var(--border-color)]">
+                              <p className="text-[10px] text-blue-500 font-bold mb-2">แก้ไขค่าคอมมิชชั่น (%)</p>
+                              <div className="grid grid-cols-2 gap-2 mb-3">
+                                {Object.keys(DEFAULT_COMM_RATES).map(k => (
+                                  <div key={k} className="flex items-center gap-2">
+                                    <span className="text-[10px] text-[var(--text-secondary)] w-12">{DEFAULT_PAY_RATES[k].name}</span>
+                                    <input type="number" value={editingCommRates?.[k] === 0 ? '' : (editingCommRates?.[k] || '')} onChange={(e) => setEditingCommRates({...editingCommRates, [k]: parseFloat(e.target.value)||0})} placeholder="0" className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded p-1.5 text-xs text-[var(--text-primary)] outline-none" />
+                                  </div>
+                                ))}
+                              </div>
+                              <button onClick={() => handleUpdateComm(u.uid)} className="w-full bg-blue-500/20 text-[var(--text-info)] px-3 py-2 rounded font-bold text-xs">บันทึกค่าคอม</button>
+                            </div>
+
+                            <div className="flex justify-between items-center mt-1 px-1">
+                              <button onClick={() => { if(window.confirm(`ต้องการตัดเครดิตของ ${u.username} ให้เหลือ 0 ใช่หรือไม่?`)) { handleUpdateCredit(u.uid, -u.credit); } }} className="text-[var(--text-danger)] text-xs underline font-medium">ถอนทั้งหมด (เหลือ 0)</button>
+                              <button onClick={() => setEditingUser(null)} className="text-[var(--text-muted)] text-xs underline">ปิด</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              {(ctx.usersDb || []).filter(u => u?.role !== 'admin').length === 0 && <div className="text-center text-[var(--text-muted)] p-4">ยังไม่มีสมาชิก</div>}
+            </div>
+          </div>
+        )}
+
+        {adminTab === 'tickets' && (
+          <div className="animate-in fade-in space-y-4">
+            <div className="bg-[var(--bg-panel)] p-3 border border-[var(--border-color)] rounded-xl mb-4 shadow-sm">
+               <div className="flex items-center gap-2">
+                 <label className="text-sm font-bold text-[var(--text-secondary)]">ดูยอดของวันที่:</label>
+                 <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="flex-1 bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-primary)] p-2 rounded-lg text-sm outline-none" />
+                 {filterDate && <button onClick={() => setFilterDate('')} className="bg-red-500/10 text-red-500 px-3 py-2 rounded-lg text-xs font-bold">ดูทั้งหมด</button>}
+               </div>
+            </div>
+
+            <div className="bg-[var(--bg-panel)] p-4 rounded-xl border border-[var(--border-color)] flex justify-between items-center shadow-sm">
+              <div><p className="text-xs text-[var(--text-secondary)]">แทงรวม</p><p className="font-bold text-[var(--text-primary)]">฿ {totalBetAll.toLocaleString()}</p></div>
+              <div><p className="text-xs text-[var(--text-secondary)]">คอม+จ่ายรวม</p><p className="font-bold text-[var(--text-danger)]">฿ {(totalPayoutAll+totalCommAll).toLocaleString()}</p></div>
+              <div className="text-right"><p className="text-xs text-[var(--text-secondary)]">กำไรเว็บสุทธิ</p><p className={`font-black text-lg ${totalProfit >= 0 ? 'text-[var(--text-success)]' : 'text-[var(--text-danger)]'}`}>฿ {totalProfit.toLocaleString()}</p></div>
+            </div>
+
+            <div className="space-y-3">
+              {allFilteredTickets.slice().reverse().map(ticket => {
+                 if(!ticket) return null;
+                 const camp = (ctx.campaigns || []).find(c => c?.id === ticket.campaignId);
+                 const isCancelled = ticket.status === 'cancelled';
+                 return (
+                  <div key={ticket.id} className={`bg-[var(--bg-panel)] p-3 rounded-xl border border-[var(--border-color)] text-sm shadow-sm ${isCancelled ? 'opacity-50' : ''}`}>
+                    <div className="flex justify-between border-b border-[var(--border-color)] pb-2 mb-2">
+                      <span className="text-[var(--text-secondary)]">ยูส: <b className="text-[var(--text-primary)]">{ticket.username}</b></span>
+                      <span className={isCancelled ? 'text-gray-500' : ticket.status === 'processed' ? 'text-[var(--text-success)]' : 'text-[var(--text-accent-bold)]'}>{isCancelled ? 'ยกเลิกแล้ว' : ticket.status === 'processed' ? 'ออกผลแล้ว' : 'รอออกผล'}</span>
+                    </div>
+                    <div className="text-[var(--text-primary)] font-bold mb-1">{camp?.name || 'ไม่ทราบรอบหวย'}</div>
+                    <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                      <span>ยอดแทง: <b className="text-[var(--text-accent-bold)]">฿{ticket.totalAmount}</b></span>
+                      <span>ส่วนลด: <b className="text-green-500">฿{ticket.commissionEarned || 0}</b></span>
+                    </div>
+                    {ticket.status === 'processed' && (
+                      <div className="mt-2 pt-2 border-t border-[var(--border-color)] text-right">
+                        <span className="text-xs text-[var(--text-secondary)] mr-2">ถูกรางวัล:</span>
+                        <span className={`font-bold ${ticket.totalWin > 0 ? 'text-[var(--text-success)]' : 'text-[var(--text-muted)]'}`}>฿{(ticket.totalWin||0).toLocaleString()}</span>
+                      </div>
+                    )}
+                  </div>
+                 )
+              })}
+              {allFilteredTickets.length === 0 && <div className="text-center text-[var(--text-muted)] p-4">ไม่มีประวัติการแทงของวันที่เลือก</div>}
+            </div>
+          </div>
+        )}
+
+        {adminTab === 'system' && (
+          <div className="animate-in fade-in space-y-6">
+             <div className="bg-[var(--bg-panel)] p-6 rounded-2xl border border-[var(--border-color)] shadow-sm text-center">
+                <i className="fas fa-database text-[var(--text-info)] text-5xl mb-4"></i>
+                <h2 className="text-lg font-bold text-[var(--text-primary)] mb-2">ระบบฐานข้อมูล (Local DB)</h2>
+                <p className="text-xs text-[var(--text-secondary)] mb-6">ข้อมูลจะถูกบันทึกอัตโนมัติบนเบราว์เซอร์</p>
+                <div className="grid grid-cols-3 gap-2 text-center text-sm border-t border-[var(--border-color)] py-4">
+                  <div><p className="font-bold text-[var(--text-primary)]">{(ctx.usersDb || []).filter(u=>u?.role!=='admin').length}</p><p className="text-xs text-[var(--text-secondary)]">สมาชิก</p></div>
+                  <div><p className="font-bold text-[var(--text-primary)]">{(ctx.campaigns || []).length}</p><p className="text-xs text-[var(--text-secondary)]">รอบหวย</p></div>
+                  <div><p className="font-bold text-[var(--text-primary)]">{(ctx.betTickets || []).length}</p><p className="text-xs text-[var(--text-secondary)]">โพย</p></div>
+                </div>
+             </div>
+
+             <div className="bg-orange-950/20 p-6 rounded-2xl border border-orange-500/50 shadow-sm text-center mt-4">
+                <i className="fas fa-broom text-orange-500 text-4xl mb-2"></i>
+                <h2 className="text-base font-bold text-orange-500 mb-2">ล้างประวัติเก่า (Clear Cache)</h2>
+                <p className="text-xs text-orange-400 mb-6 opacity-80">ปุ่มนี้จะลบเฉพาะ "โพยเก่า" และ "ผลรางวัลเก่า" ทิ้งทั้งหมด เพื่อให้ระบบทำงานเร็วขึ้น (เครดิต, สมาชิก, และรายชื่อหวยจะยังอยู่ครบ)</p>
+                <button onClick={handleClearHistory} className="w-full bg-orange-600 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-orange-700 transition-colors">
+                  ล้างประวัติเก่าทั้งหมด
+                </button>
+             </div>
+
+             <div className="bg-red-950/20 p-6 rounded-2xl border border-red-500/50 shadow-sm text-center mt-4">
+                <i className="fas fa-exclamation-triangle text-[var(--text-danger)] text-4xl mb-2"></i>
+                <h2 className="text-base font-bold text-[var(--text-danger)] mb-2">อันตราย: ล้างข้อมูลโรงงาน</h2>
+                <p className="text-xs text-[var(--text-danger)] mb-6 opacity-80">ปุ่มนี้จะลบข้อมูลทุกอย่างในระบบกลับเป็นศูนย์ (ข้อมูลแอดมิน, สมาชิก, หวย, โพย จะหายหมด)</p>
+                <button onClick={handleFactoryReset} className="w-full bg-red-600 text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-red-700 transition-colors">
+                  ล้างระบบทั้งหมด (Factory Reset)
+                </button>
+             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const BottomNav = ({ ctx }) => (
+  <div className="fixed bottom-0 w-full max-w-md bg-[var(--bg-panel)] border-t border-[var(--border-color)] flex justify-around items-center pt-2 px-2 z-30 pb-4 shadow-2xl transition-colors">
+    <button onClick={() => ctx.setView('home')} className={`flex flex-col items-center p-2 transition-transform ${ctx.view === 'home' ? 'text-[var(--text-accent-bold)] scale-110' : 'text-[var(--text-muted)]'}`}><i className="fas fa-home text-xl"></i><span className="text-[10px] mt-1 font-medium">หน้าหลัก</span></button>
+    <button onClick={() => ctx.setView('user_tickets')} className={`flex flex-col items-center p-2 transition-transform ${ctx.view === 'user_tickets' ? 'text-[var(--text-accent-bold)] scale-110' : 'text-[var(--text-muted)]'}`}><i className="fas fa-file-invoice text-xl"></i><span className="text-[10px] mt-1 font-medium">โพยหวย</span></button>
+    <div className="relative -top-6">
+      <button onClick={() => ctx.setView('contact')} className="w-14 h-14 bg-gradient-to-tr from-blue-600 to-blue-800 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-900/50 border-4 border-[var(--bg-app)] transition-transform hover:scale-105"><i className="fas fa-comment-dots text-2xl"></i></button>
+    </div>
+    <button onClick={() => ctx.setView('results')} className={`flex flex-col items-center p-2 transition-transform ${ctx.view === 'results' ? 'text-[var(--text-success)] scale-110' : 'text-[var(--text-muted)]'}`}><i className="fas fa-medal text-xl"></i><span className="text-[10px] mt-1 font-medium">ผลรางวัล</span></button>
+    <button onClick={() => { ctx.setUser(null); ctx.setView('login'); }} className="flex flex-col items-center p-2 text-[var(--text-danger)] opacity-80 hover:opacity-100"><i className="fas fa-sign-out-alt text-xl"></i><span className="text-[10px] mt-1 font-medium">ออกระบบ</span></button>
+  </div>
+);
+
+// MAIN APP
+function App() {
+  const [isDarkMode, setIsDarkMode] = usePersistentStorage('VIP_THEME', true);
+  const [usersDb, setUsersDb] = usePersistentStorage('VIP_USERS', []);
+  const [campaigns, setCampaigns] = usePersistentStorage('VIP_CAMPAIGNS', []);
+  const [betTickets, setBetTickets] = usePersistentStorage('VIP_TICKETS', []);
+  const [timeDefaults, setTimeDefaults] = usePersistentStorage('VIP_TIME_DEFAULTS', { openTime: '', closeTime: '' });
+
+  const [user, setUser] = useState(null); 
+  const [view, setView] = useState('login'); 
+  const [cart, setCart] = useState([]);
+  const [notification, setNotification] = useState('');
+  const [activeCampaign, setActiveCampaign] = useState(null);
+
+  const showNotification = (msg) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  const ctx = {
+    isDarkMode, setIsDarkMode,
+    usersDb, setUsersDb,
+    campaigns, setCampaigns,
+    betTickets, setBetTickets,
+    timeDefaults, setTimeDefaults,
+    user, setUser,
+    view, setView,
+    cart, setCart,
+    activeCampaign, setActiveCampaign,
+    showNotification
+  };
+
+  return (
+    <div className={`theme-${isDarkMode ? 'dark' : 'light'} bg-[var(--bg-body)] min-h-screen text-[var(--text-primary)] font-sans selection:bg-red-500 flex justify-center transition-colors duration-300`}>
+      <div className="w-full max-w-md bg-[var(--bg-app)] min-h-screen relative overflow-hidden shadow-2xl">
+        {notification && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[var(--bg-panel)] border border-[var(--border-color)] text-[var(--text-accent-bold)] px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in w-max max-w-[90%]">
+            <i className="fas fa-exclamation-circle"></i>
+            <span className="text-sm font-bold">{notification}</span>
+          </div>
+        )}
+
+        {view === 'login' && <LoginView ctx={ctx} />}
+        {view === 'home' && <HomeView ctx={ctx} />}
+        {view === 'lotto' && <LottoView ctx={ctx} />}
+        {view === 'cart' && <CartView ctx={ctx} />}
+        {view === 'admin' && <AdminView ctx={ctx} />}
+        {view === 'user_tickets' && <UserTicketsView ctx={ctx} />}
+        {view === 'sales' && <SalesSummaryView ctx={ctx} />}
+        {view === 'results' && <ResultsView ctx={ctx} />}
+        {view === 'contact' && <ContactView ctx={ctx} />}
+
+        {user && user.role !== 'admin' && !['login', 'cart'].includes(view) && <BottomNav ctx={ctx} />}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+  </script>
+</body>
+</html>
